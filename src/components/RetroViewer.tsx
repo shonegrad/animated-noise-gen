@@ -118,36 +118,43 @@ export function RetroViewer({ settings }: RetroViewerProps) {
     }
   };
 
-  // Export Logic (Moved from App.tsx)
-  const handleExportGif = async (duration: number) => {
+  // Export Logic (Updated for v0.4)
+  const handleExportGif = async (duration: number, resolution: '1080p' | '4K', exportFps: number) => {
     const canvas = generatorRef.current?.getCanvas();
     if (!canvas) return;
 
     setIsExporting(true);
     setExportProgress(0);
 
-    // Simulation
-    const totalFramesToCapture = duration * settings.speed;
-    const frames = [];
+    const targetWidth = resolution === '4K' ? 3840 : 1920;
+    const targetHeight = resolution === '4K' ? 2160 : 1080;
+    const totalFrames = duration * exportFps;
 
-    for (let i = 0; i < totalFramesToCapture; i++) {
-      setExportProgress((i / totalFramesToCapture) * 50);
-      await new Promise((r) => setTimeout(r, 1000 / settings.speed));
-      frames.push(canvas.toDataURL('image/png'));
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = targetWidth;
+    offscreenCanvas.height = targetHeight;
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+    if (!offscreenCtx) {
+      setIsExporting(false);
+      toast.error('Failed to create export canvas');
+      return;
     }
 
-    const simulateEncoding = async () => {
-      for (let i = 0; i <= 10; i++) {
-        setExportProgress(50 + i * 5);
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    };
+    const frames: string[] = [];
 
-    await simulateEncoding();
+    for (let i = 0; i < totalFrames; i++) {
+      setExportProgress((i / totalFrames) * 50);
+      await new Promise((r) => setTimeout(r, 1000 / exportFps));
+
+      offscreenCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+      frames.push(offscreenCanvas.toDataURL('image/png'));
+    }
+
     setIsExporting(false);
     setIsExportModalOpen(false);
-    alert('Export simulation complete!');
+    toast.info('GIF export coming soon (gif.js integration pending)');
   };
+
 
   const handleExportVideo = async (duration: number, format: 'webm' | 'mp4') => {
     const canvas = generatorRef.current?.getCanvas();
