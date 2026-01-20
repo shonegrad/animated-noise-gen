@@ -318,7 +318,7 @@ export function RetroViewer({ settings }: RetroViewerProps) {
       </div>
 
       {/* Quick Presets */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+      <div className="grid grid-cols-3 lg:grid-cols-4 gap-3 pt-2">
         <button onClick={() => settings.applyPreset('default')} className="tv-button h-12 text-xs">
           Default
         </button>
@@ -330,6 +330,66 @@ export function RetroViewer({ settings }: RetroViewerProps) {
         </button>
         <button onClick={() => settings.applyPreset('trip')} className="tv-button h-12 text-xs">
           Trip
+        </button>
+        <button
+          onClick={() => settings.applyPreset('fbm-clouds')}
+          className="tv-button h-12 text-xs"
+        >
+          Clouds
+        </button>
+        <button
+          onClick={() => settings.applyPreset('fbm-terrain')}
+          className="tv-button h-12 text-xs"
+        >
+          Terrain
+        </button>
+        <button
+          onClick={() => settings.applyPreset('domain-warp-liquid')}
+          className="tv-button h-12 text-xs"
+        >
+          Liquid
+        </button>
+        <button
+          onClick={() => settings.applyPreset('ridged-mountains')}
+          className="tv-button h-12 text-xs"
+        >
+          Mountains
+        </button>
+        <button
+          onClick={() => settings.applyPreset('halftone-print')}
+          className="tv-button h-12 text-xs"
+        >
+          Halftone
+        </button>
+        <button
+          onClick={() => settings.applyPreset('hatching-sketch')}
+          className="tv-button h-12 text-xs"
+        >
+          Hatching
+        </button>
+        <button
+          onClick={() => settings.applyPreset('moire-interference')}
+          className="tv-button h-12 text-xs"
+        >
+          Moire
+        </button>
+        <button
+          onClick={() => settings.applyPreset('gradient-waves')}
+          className="tv-button h-12 text-xs"
+        >
+          Waves
+        </button>
+        <button
+          onClick={() => settings.applyPreset('metaballs-merge')}
+          className="tv-button h-12 text-xs"
+        >
+          Merge
+        </button>
+        <button
+          onClick={() => settings.applyPreset('metaballs-pulse')}
+          className="tv-button h-12 text-xs"
+        >
+          Pulse
         </button>
       </div>
 

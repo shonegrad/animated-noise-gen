@@ -30,7 +30,7 @@ export interface UseNoiseSettingsResult extends NoiseSettings {
   setPatternParam: (name: string, value: number) => void;
   setSeed: (value: number | undefined) => void;
   randomizeSeed: () => void;
-  applyPreset: (preset: 'default' | 'hacker' | 'vcr' | 'trip') => void;
+  applyPreset: (preset: string) => void;
 }
 
 /** Default settings */
@@ -89,7 +89,7 @@ export function useNoiseSettings(
   }, []);
 
   const applyPreset = useCallback(
-    (preset: 'default' | 'hacker' | 'vcr' | 'trip') => {
+    (preset: string) => {
       switch (preset) {
         case 'default':
           setPattern('pixels');
@@ -115,9 +115,91 @@ export function useNoiseSettings(
           setDistortion('cyberpunk');
           setSpeed(30);
           break;
+        case 'fbm-clouds':
+          setPattern('fbm');
+          setColorMode('cool');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('octaves', 5);
+          setPatternParam('lacunarity', 2.2);
+          setPatternParam('gain', 0.4);
+          break;
+        case 'fbm-terrain':
+          setPattern('fbm');
+          setColorMode('fire');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('octaves', 6);
+          setPatternParam('lacunarity', 2.5);
+          setPatternParam('gain', 0.6);
+          break;
+        case 'domain-warp-liquid':
+          setPattern('domain-warp');
+          setColorMode('neon');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('scale', 0.8);
+          setPatternParam('complexity', 4);
+          break;
+        case 'ridged-mountains':
+          setPattern('ridged');
+          setColorMode('monochrome');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('scale', 1.0);
+          setPatternParam('sharpness', 0.7);
+          break;
+        case 'halftone-print':
+          setPattern('halftone');
+          setColorMode('monochrome');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('dotSize', 8);
+          setPatternParam('angle', 45);
+          break;
+        case 'hatching-sketch':
+          setPattern('hatching');
+          setColorMode('grayscale');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('density', 4);
+          setPatternParam('angle', 45);
+          break;
+        case 'moire-interference':
+          setPattern('moire');
+          setColorMode('rgb');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('frequency', 0.7);
+          setPatternParam('rotation', 30);
+          break;
+        case 'gradient-waves':
+          setPattern('gradient-bands');
+          setColorMode('warm');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('bandCount', 8);
+          setPatternParam('speed', 0.8);
+          break;
+        case 'metaballs-merge':
+          setPattern('metaballs');
+          setColorMode('neon');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('ballCount', 4);
+          setPatternParam('radius', 80);
+          break;
+        case 'metaballs-pulse':
+          setPattern('metaballs');
+          setColorMode('fire');
+          setDistortion('none');
+          setSpeed(30);
+          setPatternParam('ballCount', 6);
+          setPatternParam('radius', 60);
+          break;
       }
     },
-    [setPattern, setColorMode, setDistortion, setSpeed]
+    [setPattern, setColorMode, setDistortion, setSpeed, setPatternParam]
   );
 
   return {
