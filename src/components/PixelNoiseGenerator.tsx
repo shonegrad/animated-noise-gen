@@ -1,8 +1,64 @@
 import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 
-export type ColorMode = 'monochrome' | 'rgb' | 'neon' | 'warm' | 'cool' | 'rainbow' | 'retro';
-export type Pattern = 'pixels' | 'horizontal-lines' | 'vertical-lines' | 'static' | 'glitch' | 'checkerboard' | 'waves' | 'diagonal' | 'blocks';
-export type Distortion = 'none' | 'chromatic-aberration' | 'scanlines' | 'crt' | 'noise-overlay' | 'vhs' | 'pixelate' | 'dither' | 'fisheye' | 'glow' | 'rgb-split' | 'kaleidoscope' | 'ripple' | 'radial-fade' | 'cyberpunk' | 'vortex' | 'matrix';
+export type ColorMode =
+  | 'monochrome'
+  | 'rgb'
+  | 'grayscale'
+  | 'neon'
+  | 'warm'
+  | 'cool'
+  | 'rainbow'
+  | 'retro'
+  | 'matrix'
+  | 'fire'
+  | 'ocean';
+export type Pattern =
+  | 'pixels'
+  | 'horizontal-lines'
+  | 'vertical-lines'
+  | 'static'
+  | 'glitch'
+  | 'checkerboard'
+  | 'waves'
+  | 'diagonal'
+  | 'blocks'
+  | 'scanlines'
+  | 'plasma'
+  | 'cellular';
+export type Distortion =
+  | 'none'
+  | 'chromatic-aberration'
+  | 'scanlines'
+  | 'crt'
+  | 'noise-overlay'
+  | 'vhs'
+  | 'pixelate'
+  | 'dither'
+  | 'fisheye'
+  | 'glow'
+  | 'rgb-split'
+  | 'kaleidoscope'
+  | 'ripple'
+  | 'radial-fade'
+  | 'cyberpunk'
+  | 'vortex'
+  | 'matrix'
+  | 'noise'
+  | 'jitter'
+  | 'glitch'
+  | 'wave'
+  | 'scanline-roll'
+  | 'crt-display'
+  | 'vhs-tape'
+  | 'psychedelic'
+  | 'posterize'
+  | 'barrel'
+  | 'pinch'
+  | 'blur'
+  | 'sharpen'
+  | 'emboss'
+  | 'sepia'
+  | 'invert';
 
 /**
  * Props for configuring the PixelNoiseGenerator component.
@@ -10,7 +66,7 @@ export type Distortion = 'none' | 'chromatic-aberration' | 'scanlines' | 'crt' |
 interface PixelNoiseGeneratorProps {
   /** Size of each pixel block in the generated noise */
   pixelSize: number;
-  /** Animation speed in frames per second (approximate) */
+  /** Frames per second for animation (strict: exactly 1 frame per 1/fps seconds) */
   speed: number;
   /** Color palette strategy to use */
   colorMode: ColorMode;
@@ -27,6 +83,8 @@ interface PixelNoiseGeneratorProps {
   };
   /** Whether the animation loop is currently paused */
   isPaused: boolean;
+  /** Optional deterministic seed for reproducible output */
+  seed?: number;
 }
 
 /**
@@ -45,57 +103,104 @@ export interface PixelNoiseGeneratorRef {
   getTotalFrames: () => number;
   /** Jumps to a specific frame index in history */
   seekToFrame: (index: number) => void;
+  /** Gets actual FPS measured over the last second */
+  getActualFps: () => number;
+  /** Gets total dropped frames since last reset */
+  getDroppedFrames: () => number;
+  /** Resets dropped frames counter */
+  resetDroppedFrames: () => void;
 }
 
 export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoiseGeneratorProps>(
-  ({ pixelSize, speed, colorMode, pattern, distortion, distortionParams, isPaused }, ref) => {
+  ({ pixelSize, speed, colorMode, pattern, distortion, distortionParams, isPaused, seed }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number | undefined>(undefined);
-    const frameHistoryRef = useRef<ImageData[]>([]);
-    const currentFrameIndexRef = useRef<number>(-1);
-    const maxHistorySize = 100; // Store last 100 frames
+
+    const initSeed = (provided?: number) => {
+      if (provided !== undefined && provided > 0) return provided;
+      const buf = new Uint32Array(1);
+      crypto.getRandomValues(buf);
+      return buf[0] || 1;
+    };
+
+    const mulberry32 = (seed: number) => {
+      let a = seed >>> 0;
+      return () => {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+
+    const mixSeed = (base: number, frame: number) => {
+      let x = (base ^ (frame * 0x9e3779b1)) >>> 0;
+      x ^= x >>> 16;
+      x = Math.imul(x, 0x7feb352d);
+      x ^= x >>> 15;
+      x = Math.imul(x, 0x846ca68b);
+      x ^= x >>> 16;
+      return x >>> 0;
+    };
+
+    const baseSeedRef = useRef<number>(initSeed(seed));
+    const absoluteFrameRef = useRef<number>(0);
+
+    const droppedFramesRef = useRef<number>(0);
+    const lastFrameCountRef = useRef<number>(0);
+    const lastFpsUpdateTimeRef = useRef<number>(0);
+    const actualFpsRef = useRef<number>(0);
+
+    const getActualFps = () => actualFpsRef.current;
+    const getDroppedFrames = () => droppedFramesRef.current;
+    const resetDroppedFrames = () => {
+      droppedFramesRef.current = 0;
+      lastFrameCountRef.current = absoluteFrameRef.current;
+    };
+
+    // Timeline is a rolling window of recent frames.
+    const windowStartFrameRef = useRef<number>(0);
+    const windowSizeRef = useRef<number>(0);
+    const maxWindowFrames = 600;
 
     /**
      * Generates a color [r, g, b] based on the selected mode.
      */
-    const getColorForMode = (colorMode: ColorMode): [number, number, number] => {
-      switch (colorMode) {
+    const getColorForMode = (mode: ColorMode, rng: () => number): [number, number, number] => {
+      switch (mode) {
         case 'monochrome': {
-          const gray = Math.floor(Math.random() * 256);
+          const gray = Math.floor(rng() * 256);
           return [gray, gray, gray];
         }
         case 'rgb': {
-          return [
-            Math.floor(Math.random() * 256),
-            Math.floor(Math.random() * 256),
-            Math.floor(Math.random() * 256)
-          ];
+          return [Math.floor(rng() * 256), Math.floor(rng() * 256), Math.floor(rng() * 256)];
         }
         case 'neon': {
-          const choice = Math.random();
-          if (choice < 0.33) return [Math.floor(Math.random() * 100 + 155), 0, Math.floor(Math.random() * 100 + 155)]; // Pink/Purple
-          if (choice < 0.66) return [0, Math.floor(Math.random() * 100 + 155), Math.floor(Math.random() * 100 + 155)]; // Cyan
-          return [Math.floor(Math.random() * 100 + 155), Math.floor(Math.random() * 100 + 155), 0]; // Yellow
+          const choice = rng();
+          if (choice < 0.33)
+            return [Math.floor(rng() * 100 + 155), 0, Math.floor(rng() * 100 + 155)]; // Pink/Purple
+          if (choice < 0.66)
+            return [0, Math.floor(rng() * 100 + 155), Math.floor(rng() * 100 + 155)]; // Cyan
+          return [Math.floor(rng() * 100 + 155), Math.floor(rng() * 100 + 155), 0]; // Yellow
         }
         case 'warm': {
           return [
-            Math.floor(Math.random() * 100 + 155),
-            Math.floor(Math.random() * 100 + 55),
-            Math.floor(Math.random() * 50)
+            Math.floor(rng() * 100 + 155),
+            Math.floor(rng() * 100 + 55),
+            Math.floor(rng() * 50),
           ];
         }
         case 'cool': {
           return [
-            Math.floor(Math.random() * 50),
-            Math.floor(Math.random() * 100 + 100),
-            Math.floor(Math.random() * 100 + 155)
+            Math.floor(rng() * 50),
+            Math.floor(rng() * 100 + 100),
+            Math.floor(rng() * 100 + 155),
           ];
         }
         case 'rainbow': {
-          // Approximate hsl -> rgb for random hue
-          // Simple RGB walk for performance
-          const hue = Math.floor(Math.random() * 6);
-          const val = Math.floor(Math.random() * 256);
+          const hue = Math.floor(rng() * 6);
+          const val = Math.floor(rng() * 256);
           if (hue === 0) return [255, val, 0];
           if (hue === 1) return [val, 255, 0];
           if (hue === 2) return [0, 255, val];
@@ -105,20 +210,181 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         }
         case 'retro': {
           const palette: [number, number, number][] = [
-            [0, 0, 0], [29, 43, 83], [126, 37, 83], [0, 135, 81],
-            [171, 82, 54], [95, 87, 79], [194, 195, 199], [255, 241, 232],
-            [255, 0, 77], [255, 163, 0], [255, 236, 39], [0, 228, 54],
-            [41, 173, 255], [131, 118, 156], [255, 119, 168], [255, 204, 170]
+            [0, 0, 0],
+            [29, 43, 83],
+            [126, 37, 83],
+            [0, 135, 81],
+            [171, 82, 54],
+            [95, 87, 79],
+            [194, 195, 199],
+            [255, 241, 232],
+            [255, 0, 77],
+            [255, 163, 0],
+            [255, 236, 39],
+            [0, 228, 54],
+            [41, 173, 255],
+            [131, 118, 156],
+            [255, 119, 168],
+            [255, 204, 170],
           ];
-          return palette[Math.floor(Math.random() * palette.length)];
+          return palette[Math.floor(rng() * palette.length)];
+        }
+        default: {
+          const gray = Math.floor(rng() * 256);
+          return [gray, gray, gray];
         }
       }
     };
 
-    const generateNoiseFrame = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
+    const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+    const hash2 = (x: number, y: number) => {
+      const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+      return n - Math.floor(n);
+    };
+
+    const randInt = (rng: () => number, maxExclusive: number) => Math.floor(rng() * maxExclusive);
+
+    const colorFromValue = (
+      mode: ColorMode,
+      v: number,
+      x: number,
+      y: number,
+      t: number
+    ): [number, number, number] => {
+      const vv = clamp01(v);
+
+      if (mode === 'monochrome' || mode === 'grayscale') {
+        const g = Math.floor(vv * 255);
+        return [g, g, g];
+      }
+
+      if (mode === 'warm') {
+        const r = Math.floor(lerp(140, 255, vv));
+        const g = Math.floor(lerp(40, 190, vv));
+        const b = Math.floor(lerp(10, 80, vv));
+        return [r, g, b];
+      }
+
+      if (mode === 'cool') {
+        const r = Math.floor(lerp(0, 90, vv));
+        const g = Math.floor(lerp(90, 220, vv));
+        const b = Math.floor(lerp(130, 255, vv));
+        return [r, g, b];
+      }
+
+      if (mode === 'ocean') {
+        const r = Math.floor(lerp(0, 40, vv));
+        const g = Math.floor(lerp(60, 200, vv));
+        const b = Math.floor(lerp(120, 255, vv));
+        return [r, g, b];
+      }
+
+      if (mode === 'fire') {
+        // black -> red -> yellow -> white
+        const r = Math.floor(lerp(0, 255, vv));
+        const g = Math.floor(lerp(0, 255, clamp01((vv - 0.3) / 0.7)));
+        const b = Math.floor(lerp(0, 255, clamp01((vv - 0.75) / 0.25)));
+        return [r, g, b];
+      }
+
+      if (mode === 'matrix') {
+        const g = Math.floor(lerp(0, 255, vv));
+        return [0, g, Math.floor(g * 0.2)];
+      }
+
+      if (mode === 'retro') {
+        const palette: [number, number, number][] = [
+          [0, 0, 0],
+          [29, 43, 83],
+          [126, 37, 83],
+          [0, 135, 81],
+          [171, 82, 54],
+          [95, 87, 79],
+          [194, 195, 199],
+          [255, 241, 232],
+          [255, 0, 77],
+          [255, 163, 0],
+          [255, 236, 39],
+          [0, 228, 54],
+          [41, 173, 255],
+          [131, 118, 156],
+          [255, 119, 168],
+          [255, 204, 170],
+        ];
+
+        const idx = Math.floor(vv * (palette.length - 1));
+        return palette[idx];
+      }
+
+      if (mode === 'neon') {
+        // neon-ish palette driven by v
+        const r = Math.floor(lerp(50, 255, 0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 0.0)));
+        const g = Math.floor(lerp(0, 255, 0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 2.2)));
+        const b = Math.floor(lerp(80, 255, 0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 4.4)));
+        return [r, g, b];
+      }
+
+      // rgb / rainbow fallback: phase-shifted sine ramps
+      const r = Math.floor(255 * (0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 0.0)));
+      const g = Math.floor(255 * (0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 2.1)));
+      const b = Math.floor(255 * (0.5 + 0.5 * Math.sin(vv * Math.PI * 2 + 4.2)));
+
+      // slight spatial wobble so flat v isn't too uniform
+      const wobble = 0.03 * Math.sin(x * 0.01 + y * 0.01 + t);
+      return [
+        Math.floor(255 * clamp01(r / 255 + wobble)),
+        Math.floor(255 * clamp01(g / 255 + wobble)),
+        Math.floor(255 * clamp01(b / 255 + wobble)),
+      ];
+    };
+
+    const ensureWindowContainsFrame = (frameIndex: number) => {
+      // Keep a rolling window [start, start+size)
+      // We allow seeking backward within the window only.
+      const start = windowStartFrameRef.current;
+      const end = start + windowSizeRef.current;
+
+      if (windowSizeRef.current === 0) {
+        windowStartFrameRef.current = frameIndex;
+        windowSizeRef.current = 1;
+        return;
+      }
+
+      if (frameIndex < start) {
+        // Clamp: do not allow seeking before the window.
+        return;
+      }
+
+      if (frameIndex >= end) {
+        const newEnd = frameIndex + 1;
+        const newStart = Math.max(0, newEnd - maxWindowFrames);
+        windowStartFrameRef.current = newStart;
+        windowSizeRef.current = newEnd - newStart;
+      }
+
+      if (windowSizeRef.current > maxWindowFrames) {
+        windowStartFrameRef.current =
+          windowStartFrameRef.current + (windowSizeRef.current - maxWindowFrames);
+        windowSizeRef.current = maxWindowFrames;
+      }
+    };
+
+    const renderFrame = (
+      ctx: CanvasRenderingContext2D,
+      canvas: HTMLCanvasElement,
+      frameIndex: number
+    ) => {
       const width = canvas.width;
       const height = canvas.height;
       if (width === 0 || height === 0) return;
+
+      ensureWindowContainsFrame(frameIndex);
+
+      const rng = mulberry32(mixSeed(baseSeedRef.current, frameIndex));
+      const baseFps = 30;
+      const t = frameIndex / baseFps;
 
       const imageData = ctx.createImageData(width, height);
       const data = imageData.data; // Uint8ClampedArray
@@ -134,7 +400,8 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         case 'pixels': {
           for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
-              const [r, g, b] = getColorForMode(colorMode);
+              const [r, g, b] = getColorForMode(colorMode, rng);
+
               const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
               const startY = y * pixelSize;
@@ -154,7 +421,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         }
         case 'horizontal-lines': {
           for (let y = 0; y < rows; y++) {
-            const [r, g, b] = getColorForMode(colorMode);
+            const [r, g, b] = getColorForMode(colorMode, rng);
             const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
             const startY = y * pixelSize;
@@ -170,13 +437,13 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         }
         case 'vertical-lines': {
           for (let x = 0; x < cols; x++) {
-            const [r, g, b] = getColorForMode(colorMode);
+            const [r, g, b] = getColorForMode(colorMode, rng);
             const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
             const startX = x * pixelSize;
             const limitX = Math.min(startX + pixelSize, width);
 
-            // This is less efficient than row filling due to memory jumps, 
+            // This is less efficient than row filling due to memory jumps,
             // but loop order optimization helps
             for (let py = 0; py < height; py++) {
               const rowOffset = py * width;
@@ -194,7 +461,8 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
 
           for (let y = 0; y < smallRows; y++) {
             for (let x = 0; x < smallCols; x++) {
-              const [r, g, b] = getColorForMode(colorMode);
+              const [r, g, b] = getColorForMode(colorMode, rng);
+
               const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
               const startY = y * smallPixelSize;
@@ -216,13 +484,13 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           // Fill background black first
           data32.fill(0xff000000);
 
-          const numStrips = Math.floor(Math.random() * 10) + 5;
+          const numStrips = randInt(rng, 10) + 5;
           for (let i = 0; i < numStrips; i++) {
-            const stripY = Math.floor(Math.random() * height);
-            const stripH = Math.min(height - stripY, Math.floor(Math.random() * pixelSize * 3) + pixelSize);
-            const offset = Math.floor((Math.random() - 0.5) * pixelSize * 2);
+            const stripY = randInt(rng, height);
+            const stripH = Math.min(height - stripY, randInt(rng, pixelSize * 3) + pixelSize);
+            const offset = Math.floor((rng() - 0.5) * pixelSize * 2);
 
-            const [r, g, b] = getColorForMode(colorMode);
+            const [r, g, b] = getColorForMode(colorMode, rng);
             const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
             for (let py = stripY; py < stripY + stripH; py++) {
@@ -239,17 +507,19 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           break;
         }
         case 'checkerboard': {
+          // Two alternating colors, flip phase over time for animation
+          const motion = 2.6;
+          const phase = Math.floor(t * motion) % 2;
+          const c1 = colorFromValue(colorMode, 0.25 + 0.15 * Math.sin(t * (motion * 0.3)), 0, 0, t);
+          const c2 = colorFromValue(colorMode, 0.85 + 0.1 * Math.cos(t * (motion * 0.25)), 0, 0, t);
+          const c1Val = (255 << 24) | (c1[2] << 16) | (c1[1] << 8) | c1[0];
+          const c2Val = (255 << 24) | (c2[2] << 16) | (c2[1] << 8) | c2[0];
+
           for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
-              // Same logic as pixels but color choice depends on parity
-              const [r, g, b] = getColorForMode(colorMode); // Random color still called? 
-              // The original implementation called getColorForMode every block, creating a random checker pattern
-              // But strictly checkerboard usually implies two colors.
-              // We will stick to the original "random noise in grid" but keep parity logic if needed.
-              // Actually let's just make it colored noise blocks like 'pixels' since original did that
-              // Original code: if ((x+y)%2 === 0) set color... 
+              const parity = (x + y + phase) % 2 === 0;
+              const colorVal = parity ? c1Val : c2Val;
 
-              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
               const startY = y * pixelSize;
               const startX = x * pixelSize;
               const limitY = Math.min(startY + pixelSize, height);
@@ -265,12 +535,194 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           }
           break;
         }
-        // ... Other patterns mapping similarly, implemented as pixels for now to save space
-        default: {
-          // Fallback to Pixels logic for waves, diagonal, blocks to ensure everything renders
+        case 'diagonal': {
+          const motion = 1.6;
           for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
-              const [r, g, b] = getColorForMode(colorMode);
+              const v = 0.5 + 0.5 * Math.sin((x + y) * 0.6 + t * motion);
+              const [r, g, b] = colorFromValue(colorMode, v, x * pixelSize, y * pixelSize, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let py = startY; py < limitY; py++) {
+                const rowOffset = py * width;
+                for (let px = startX; px < limitX; px++) {
+                  data32[rowOffset + px] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'waves': {
+          const freq = 0.06 * Math.max(1, 6 / pixelSize);
+          const motion = 1.6;
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+              const v =
+                0.5 +
+                0.5 * Math.sin(px * freq + t * motion) * Math.cos(py * freq + t * (motion * 0.75));
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let sy = startY; sy < limitY; sy++) {
+                const rowOffset = sy * width;
+                for (let sx = startX; sx < limitX; sx++) {
+                  data32[rowOffset + sx] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'blocks': {
+          // Large moving blocks (stable across a block area)
+          const block = Math.max(1, Math.floor(pixelSize * 4));
+          const bCols = Math.ceil(width / block);
+          const bRows = Math.ceil(height / block);
+          const motion = 1.2;
+
+          for (let by = 0; by < bRows; by++) {
+            for (let bx = 0; bx < bCols; bx++) {
+              const v = hash2(bx + Math.floor(t * motion), by + Math.floor(t * motion));
+              const [r, g, b] = colorFromValue(colorMode, v, bx * block, by * block, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = by * block;
+              const startX = bx * block;
+              const limitY = Math.min(startY + block, height);
+              const limitX = Math.min(startX + block, width);
+
+              for (let py = startY; py < limitY; py++) {
+                const rowOffset = py * width;
+                for (let px = startX; px < limitX; px++) {
+                  data32[rowOffset + px] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'scanlines': {
+          // Alternating horizontal bands; drift the phase to animate
+          const band = Math.max(1, Math.floor(pixelSize / 2));
+          const motion = 2.4;
+          const phase = Math.floor(t * motion) % 2;
+          for (let y = 0; y < height; y++) {
+            const line = Math.floor(y / band);
+            const v = (line + phase) % 2 === 0 ? 0.85 : 0.15;
+            const wobble = 0.08 * Math.sin(t * (motion * 0.9) + y * 0.02);
+            const vv = clamp01(v + wobble);
+            const [r, g, b] = colorFromValue(colorMode, vv, 0, y, t);
+            const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+            data32.fill(colorVal, y * width, y * width + width);
+          }
+          break;
+        }
+        case 'plasma': {
+          // Classic plasma-ish field using multiple sines
+          const s = 0.015 * Math.max(1, 10 / pixelSize);
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+              const v =
+                0.5 +
+                0.25 * Math.sin(px * s + t * 2.2) +
+                0.25 * Math.sin(py * s + t * 1.8) +
+                0.15 * Math.sin((px + py) * s * 0.7 + t * 2.6);
+
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let sy = startY; sy < limitY; sy++) {
+                const rowOffset = sy * width;
+                for (let sx = startX; sx < limitX; sx++) {
+                  data32[rowOffset + sx] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'cellular': {
+          // Cheap cellular / voronoi-like: min distance to a few moving points
+          const pts = 12;
+          const src = new Array(pts);
+          for (let i = 0; i < pts; i++) {
+            const a = i * 2.399963229728653; // golden angle
+            src[i] = {
+              x: (0.5 + 0.45 * Math.sin(a + t * (0.6 + i * 0.02))) * width,
+              y: (0.5 + 0.45 * Math.cos(a + t * (0.7 + i * 0.02))) * height,
+            };
+          }
+
+          const invMax = 1 / Math.sqrt(width * width + height * height);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+              let d1 = 1e9;
+              let d2 = 1e9;
+
+              for (let i = 0; i < pts; i++) {
+                const dx = px - src[i].x;
+                const dy = py - src[i].y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d < d1) {
+                  d2 = d1;
+                  d1 = d;
+                } else if (d < d2) {
+                  d2 = d;
+                }
+              }
+
+              // edge intensity from difference between nearest points
+              const edge = clamp01((d2 - d1) * invMax * 6);
+              const base = 1 - clamp01(d1 * invMax * 2.5);
+              const v = clamp01(0.15 + 0.85 * (0.65 * base + 0.35 * edge));
+
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let sy = startY; sy < limitY; sy++) {
+                const rowOffset = sy * width;
+                for (let sx = startX; sx < limitX; sx++) {
+                  data32[rowOffset + sx] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        default: {
+          // Fallback to Pixels logic
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const [r, g, b] = getColorForMode(colorMode, rng);
+
               const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
               const startY = y * pixelSize;
@@ -293,7 +745,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       data.set(buf8);
 
       // Apply distortion effects
-      applyDistortion(ctx, canvas, imageData);
+      applyDistortion(ctx, canvas, imageData, rng);
 
       // Save frame to history
       if (width > 0 && height > 0) {
@@ -303,11 +755,15 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       }
     };
 
-    const applyDistortion = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, imageData: ImageData) => {
+    const applyDistortion = (
+      ctx: CanvasRenderingContext2D,
+      canvas: HTMLCanvasElement,
+      imageData: ImageData,
+      rng: () => number
+    ) => {
       const { width, height } = canvas;
       if (distortion === 'none') {
         ctx.putImageData(imageData, 0, 0);
-        saveFrame(imageData);
         return;
       }
 
@@ -322,7 +778,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           const glitchChance = distortionParams.secondary; // 0-1
 
           for (let i = 0; i < data.length; i += 4) {
-            // Boost contrast 
+            // Boost contrast
             // Simple contrast: (val - 128) * factor + 128
             const factor = 1 + intensity;
             data[i] = Math.min(255, Math.max(0, (data[i] - 128) * factor + 128)); // R
@@ -340,22 +796,16 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           }
 
           // Glitch lines
-          if (Math.random() < glitchChance) {
-            const y = Math.floor(Math.random() * height);
-            const h = Math.floor(Math.random() * 20) + 2;
-            const shift = Math.floor((Math.random() - 0.5) * 50 * intensity);
-
+          if (rng() < glitchChance) {
+            const y = randInt(rng, height);
+            const h = randInt(rng, 20) + 2;
             // Shift row
             // Needs row copy
-            // Simplified: just color shift
+            // Simplified: just draw a bright line band
             for (let py = y; py < Math.min(height, y + h); py++) {
               for (let px = 0; px < width; px++) {
                 const idx = (py * width + px) * 4;
-                if (px + shift > 0 && px + shift < width) {
-                  const sourceIdx = (py * width + (px + shift)) * 4;
-                  // data[idx] = data[sourceIdx]; // Need copy to do properly
-                }
-                data[idx] = 255; // White line 
+                data[idx] = 255; // White line
                 data[idx + 1] = 0;
                 data[idx + 2] = 255;
               }
@@ -403,7 +853,6 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         case 'matrix': {
           // Green tint + vertical trails
           const intensity = distortionParams.intensity;
-          const trailLength = Math.floor(distortionParams.secondary * 50) + 10;
 
           // Make everything green
           for (let i = 0; i < data.length; i += 4) {
@@ -413,7 +862,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
             data[i + 2] = 0;
 
             // Random bright chars
-            if (Math.random() < 0.001 * intensity) {
+            if (rng() < 0.001 * intensity) {
               data[i] = 200;
               data[i + 1] = 255;
               data[i + 2] = 200;
@@ -430,10 +879,10 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
             const x = pixelIndex % width;
 
             if (x + offset < width) {
-              data[i + (offset * 4)] = srcData[i]; // R
+              data[i + offset * 4] = srcData[i]; // R
             }
             if (x - offset >= 0) {
-              data[i - (offset * 4) + 2] = srcData[i + 2]; // B
+              data[i - offset * 4 + 2] = srcData[i + 2]; // B
             }
           }
           break;
@@ -459,8 +908,10 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         case 'noise-overlay': {
           const amount = distortionParams.intensity * 100;
           for (let i = 0; i < data.length; i += 4) {
-            const n = (Math.random() - 0.5) * amount;
-            data[i] += n; data[i + 1] += n; data[i + 2] += n;
+            const n = (rng() - 0.5) * amount;
+            data[i] += n;
+            data[i + 1] += n;
+            data[i + 2] += n;
           }
           break;
         }
@@ -469,11 +920,15 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           for (let y = 0; y < height; y += bs) {
             for (let x = 0; x < width; x += bs) {
               const rIdx = (y * width + x) * 4;
-              const r = data[rIdx], g = data[rIdx + 1], b = data[rIdx + 2];
+              const r = data[rIdx],
+                g = data[rIdx + 1],
+                b = data[rIdx + 2];
               for (let py = y; py < Math.min(y + bs, height); py++) {
                 for (let px = x; px < Math.min(x + bs, width); px++) {
                   const idx = (py * width + px) * 4;
-                  data[idx] = r; data[idx + 1] = g; data[idx + 2] = b;
+                  data[idx] = r;
+                  data[idx + 1] = g;
+                  data[idx + 2] = b;
                 }
               }
             }
@@ -515,15 +970,6 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       }
 
       ctx.putImageData(imageData, 0, 0);
-      saveFrame(imageData);
-    };
-
-    const saveFrame = (imageData: ImageData) => {
-      if (frameHistoryRef.current.length > maxHistorySize) {
-        frameHistoryRef.current.shift();
-      }
-      frameHistoryRef.current.push(imageData);
-      currentFrameIndexRef.current = frameHistoryRef.current.length - 1;
     };
 
     const stepForward = () => {
@@ -533,7 +979,8 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      generateNoiseFrame(ctx, canvas);
+      absoluteFrameRef.current++;
+      renderFrame(ctx, canvas, absoluteFrameRef.current);
     };
 
     const stepBackward = () => {
@@ -543,11 +990,9 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      if (currentFrameIndexRef.current > 0) {
-        currentFrameIndexRef.current--;
-        const frameData = frameHistoryRef.current[currentFrameIndexRef.current];
-        ctx.putImageData(frameData, 0, 0);
-      }
+      const start = windowStartFrameRef.current;
+      absoluteFrameRef.current = Math.max(start, absoluteFrameRef.current - 1);
+      renderFrame(ctx, canvas, absoluteFrameRef.current);
     };
 
     const seekToFrame = (index: number) => {
@@ -557,21 +1002,23 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      if (index >= 0 && index < frameHistoryRef.current.length) {
-        currentFrameIndexRef.current = index;
-        const frameData = frameHistoryRef.current[currentFrameIndexRef.current];
-        ctx.putImageData(frameData, 0, 0);
-      }
+      const start = windowStartFrameRef.current;
+      const end = start + windowSizeRef.current;
+      const absolute = Math.max(start, Math.min(start + index, Math.max(start, end - 1)));
+      absoluteFrameRef.current = absolute;
+      renderFrame(ctx, canvas, absoluteFrameRef.current);
     };
-
 
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
       stepForward,
       stepBackward,
-      getCurrentFrameIndex: () => currentFrameIndexRef.current,
-      getTotalFrames: () => frameHistoryRef.current.length,
+      getCurrentFrameIndex: () => absoluteFrameRef.current - windowStartFrameRef.current,
+      getTotalFrames: () => windowSizeRef.current,
       seekToFrame,
+      getActualFps,
+      getDroppedFrames,
+      resetDroppedFrames,
     }));
 
     useEffect(() => {
@@ -588,9 +1035,11 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
           if (canvas.width !== newWidth || canvas.height !== newHeight) {
             canvas.width = newWidth;
             canvas.height = newHeight;
-            frameHistoryRef.current = [];
-            currentFrameIndexRef.current = -1;
-            generateNoiseFrame(ctx, canvas);
+            baseSeedRef.current = initSeed();
+            absoluteFrameRef.current = 0;
+            windowStartFrameRef.current = 0;
+            windowSizeRef.current = 0;
+            renderFrame(ctx, canvas, 0);
           }
         }
       };
@@ -598,16 +1047,50 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
       updateCanvasSize();
       window.addEventListener('resize', updateCanvasSize);
 
-      if (frameHistoryRef.current.length === 0) generateNoiseFrame(ctx, canvas);
+      baseSeedRef.current = initSeed(seed);
+      absoluteFrameRef.current = 0;
+      windowStartFrameRef.current = 0;
+      windowSizeRef.current = 0;
+      renderFrame(ctx, canvas, 0);
 
       let lastTime = 0;
+      let accumulator = 0;
+      const fixedDt = 1000 / speed;
+
       const animate = (currentTime: number) => {
+        if (lastTime === 0) lastTime = currentTime;
+        const frameTime = currentTime - lastTime;
+        lastTime = currentTime;
+
         if (!isPaused) {
-          if (currentTime - lastTime >= (1000 / speed)) {
-            generateNoiseFrame(ctx, canvas);
-            lastTime = currentTime;
+          accumulator += frameTime;
+
+          const maxStepsPerFrame = 5;
+          let steps = 0;
+
+          while (accumulator >= fixedDt && steps < maxStepsPerFrame) {
+            absoluteFrameRef.current += 1;
+            renderFrame(ctx, canvas, absoluteFrameRef.current);
+            accumulator -= fixedDt;
+            steps++;
           }
+
+          if (accumulator >= fixedDt) {
+            droppedFramesRef.current += Math.floor(accumulator / fixedDt);
+            accumulator = accumulator % fixedDt;
+          }
+
+          const now = performance.now();
+          if (now - lastFpsUpdateTimeRef.current >= 1000) {
+            const frameDiff = absoluteFrameRef.current - lastFrameCountRef.current;
+            actualFpsRef.current = frameDiff;
+            lastFrameCountRef.current = absoluteFrameRef.current;
+            lastFpsUpdateTimeRef.current = now;
+          }
+        } else {
+          accumulator = 0;
         }
+
         animationFrameRef.current = requestAnimationFrame(animate);
       };
       animationFrameRef.current = requestAnimationFrame(animate);
@@ -616,7 +1099,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         window.removeEventListener('resize', updateCanvasSize);
       };
-    }, [pixelSize, speed, colorMode, pattern, distortion, distortionParams, isPaused]);
+    }, [pixelSize, speed, colorMode, pattern, distortion, distortionParams, isPaused, seed]);
 
     return <canvas ref={canvasRef} className="w-full h-full" />;
   }
