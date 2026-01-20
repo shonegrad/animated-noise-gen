@@ -768,9 +768,14 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
 
           for (let py = 0; py < height; py += pixelSize) {
             for (let px = 0; px < width; px += pixelSize) {
-              const v =
-                0.5 +
-                0.5 * fbm(px * scale + t * 0.5, py * scale + t * 0.5, octaves, lacunarity, gain);
+              const rawFbm = fbm(
+                px * scale + t * 0.5,
+                py * scale + t * 0.5,
+                octaves,
+                lacunarity,
+                gain
+              );
+              const v = 0.5 + 0.5 * Math.max(-1, Math.min(1, rawFbm));
               const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
               const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
@@ -847,8 +852,8 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
               const dx = nx - val;
               const dy = ny - val;
 
-              const ridge = 1 - Math.abs(dx + dy);
-              val = val + (ridge - val) * sharpness;
+              const ridge = 1 - Math.min(1, Math.abs(dx) + Math.abs(dy));
+              val = val + Math.max(0, Math.min(1, (ridge - val) * sharpness));
 
               const v = 0.5 + 0.5 * val;
               const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
@@ -895,13 +900,11 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
                 for (let hx = startX; hx < endX; hx++) {
                   const dx = hx - px;
                   const dy = hy - py;
-                  const dist = Math.sqrt(dx * dx + dy * dy);
 
                   const rotatedDx = dx * Math.cos(angleRad) - dy * Math.sin(angleRad);
                   const rotatedDy = dx * Math.sin(angleRad) + dy * Math.cos(angleRad);
 
                   const alignedX = rotatedDx * Math.cos(angleRad) + rotatedDy * Math.sin(angleRad);
-                  const alignedY = -rotatedDx * Math.sin(angleRad) + rotatedDy * Math.cos(angleRad);
 
                   const isDot = Math.floor(alignedX / dotSize) % 2 === 0;
 
@@ -979,7 +982,7 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
               const rotatedV1 = v1 * Math.cos(rotRad) - v2 * Math.sin(rotRad);
               const rotatedV2 = v1 * Math.sin(rotRad) + v2 * Math.cos(rotRad);
 
-              const v = 0.5 + 0.5 * (rotatedV1 + rotatedV2);
+              const v = 0.5 + 0.5 * Math.max(-1, Math.min(1, rotatedV1 + rotatedV2));
               const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
               const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
 
@@ -1033,9 +1036,6 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
         case 'metaballs': {
           const ballCount = patternParams.ballCount ?? 4;
           const radius = patternParams.radius ?? 60;
-
-          const cols = Math.ceil(width / pixelSize);
-          const rows = Math.ceil(height / pixelSize);
 
           const ballPositions = [];
 
