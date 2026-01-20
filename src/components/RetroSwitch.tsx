@@ -11,13 +11,13 @@ export function RetroSwitch({ label, checked, onChange }: RetroSwitchProps) {
       <div className="text-xs uppercase tracking-wider text-amber-200/70 font-mono">
         {label}
       </div>
-      
+
       {/* Switch */}
       <button
         onClick={() => onChange(!checked)}
         className="relative w-14 h-7 rounded-full transition-all"
         style={{
-          background: checked 
+          background: checked
             ? 'linear-gradient(180deg, #ff6b35 0%, #c74a20 100%)'
             : 'linear-gradient(180deg, #3a3a3a 0%, #1a1a1a 100%)',
           boxShadow: checked
@@ -34,7 +34,7 @@ export function RetroSwitch({ label, checked, onChange }: RetroSwitchProps) {
             boxShadow: '0 2px 4px rgba(0, 0, 0, 0.4)'
           }}
         />
-        
+
         {/* LED Indicator */}
         {checked && (
           <div
@@ -50,3 +50,5 @@ export function RetroSwitch({ label, checked, onChange }: RetroSwitchProps) {
     </div>
   );
 }
+
+RetroSwitch.displayName = 'RetroSwitch';

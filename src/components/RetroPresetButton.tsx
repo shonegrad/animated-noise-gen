@@ -24,3 +24,5 @@ export function RetroPresetButton({ label, onClick }: RetroPresetButtonProps) {
     </button>
   );
 }
+
+RetroPresetButton.displayName = 'RetroPresetButton';

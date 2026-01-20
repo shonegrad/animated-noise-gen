@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+build/
+dist/
+
+# vite / tooling caches
+.vite/
+.eslintcache
+.cache/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+
+# env files
+.env
+.env.*
+
+# misc
+*.local

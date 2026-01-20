@@ -237,6 +237,7 @@ export function RetroViewer({ settings }: RetroViewerProps) {
             {...settings}
             isPaused={isPaused}
             seed={settings.seed}
+            patternParams={settings.patternParams}
           />
         </div>
       </div>

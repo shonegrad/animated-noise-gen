@@ -5,12 +5,15 @@ import { RetroKnob } from './RetroKnob';
 import { RetroSelector } from './RetroSelector';
 import type { UseNoiseSettingsResult } from '../hooks/useNoiseSettings';
 import type { ColorMode, Pattern, Distortion } from './PixelNoiseGenerator';
+import { getPatternParams } from '../lib/patterns';
 
 interface ControlDeckProps {
   settings: UseNoiseSettingsResult;
 }
 
 export function ControlDeck({ settings }: ControlDeckProps) {
+  const patternParams = getPatternParams(settings.pattern);
+
   // Local state for knob inputs to avoid stuttering while typing
   const [isEditingPixelSize, setIsEditingPixelSize] = useState(false);
   const [pixelSizeInput, setPixelSizeInput] = useState(settings.pixelSize.toString());
@@ -88,6 +91,14 @@ export function ControlDeck({ settings }: ControlDeckProps) {
               { value: 'checkerboard', label: 'Checker' },
               { value: 'blocks', label: 'Blocks' },
               { value: 'glitch', label: 'Glitch' },
+              { value: 'fbm', label: 'FBM' },
+              { value: 'domain-warp', label: 'Domain' },
+              { value: 'ridged', label: 'Ridged' },
+              { value: 'halftone', label: 'Halftone' },
+              { value: 'hatching', label: 'Hatching' },
+              { value: 'moire', label: 'Moire' },
+              { value: 'gradient-bands', label: 'Gradient' },
+              { value: 'metaballs', label: 'Metaballs' },
             ]}
             onChange={(val) => settings.setPattern(val as Pattern)}
           />
@@ -158,6 +169,44 @@ export function ControlDeck({ settings }: ControlDeckProps) {
                 inputValue={secondaryInput}
                 setInputValue={setSecondaryInput}
               />
+            </div>
+          )}
+
+          {/* Pattern Params */}
+          {patternParams.length > 0 && (
+            <div className="space-y-3 pt-2 animate-in slide-in-from-top-2 fade-in duration-300">
+              <RetroKnob
+                label={patternParams[0]?.label || 'PARAM 1'}
+                value={settings.patternParams?.[patternParams[0].name] ?? patternParams[0].default}
+                min={patternParams[0].min}
+                max={patternParams[0].max}
+                step={patternParams[0].step}
+                onChange={(val) => settings.setPatternParam?.(patternParams[0].name, val)}
+              />
+              {patternParams[1] && (
+                <RetroKnob
+                  label={patternParams[1]?.label || 'PARAM 2'}
+                  value={
+                    settings.patternParams?.[patternParams[1].name] ?? patternParams[1].default
+                  }
+                  min={patternParams[1].min}
+                  max={patternParams[1].max}
+                  step={patternParams[1].step}
+                  onChange={(val) => settings.setPatternParam?.(patternParams[1].name, val)}
+                />
+              )}
+              {patternParams[2] && (
+                <RetroKnob
+                  label={patternParams[2]?.label || 'PARAM 3'}
+                  value={
+                    settings.patternParams?.[patternParams[2].name] ?? patternParams[2].default
+                  }
+                  min={patternParams[2].min}
+                  max={patternParams[2].max}
+                  step={patternParams[2].step}
+                  onChange={(val) => settings.setPatternParam?.(patternParams[2].name, val)}
+                />
+              )}
             </div>
           )}
         </div>

@@ -24,7 +24,15 @@ export type Pattern =
   | 'blocks'
   | 'scanlines'
   | 'plasma'
-  | 'cellular';
+  | 'cellular'
+  | 'fbm'
+  | 'domain-warp'
+  | 'ridged'
+  | 'halftone'
+  | 'hatching'
+  | 'moire'
+  | 'gradient-bands'
+  | 'metaballs';
 export type Distortion =
   | 'none'
   | 'chromatic-aberration'
@@ -85,6 +93,8 @@ interface PixelNoiseGeneratorProps {
   isPaused: boolean;
   /** Optional deterministic seed for reproducible output */
   seed?: number;
+  /** Pattern-specific parameters */
+  patternParams?: Record<string, number>;
 }
 
 /**
@@ -112,7 +122,20 @@ export interface PixelNoiseGeneratorRef {
 }
 
 export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoiseGeneratorProps>(
-  ({ pixelSize, speed, colorMode, pattern, distortion, distortionParams, isPaused, seed }, ref) => {
+  (
+    {
+      pixelSize,
+      speed,
+      colorMode,
+      pattern,
+      distortion,
+      distortionParams,
+      isPaused,
+      seed,
+      patternParams = {},
+    },
+    ref
+  ) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number | undefined>(undefined);
 
@@ -713,6 +736,335 @@ export const PixelNoiseGenerator = forwardRef<PixelNoiseGeneratorRef, PixelNoise
                   data32[rowOffset + sx] = colorVal;
                 }
               }
+            }
+          }
+          break;
+        }
+        case 'fbm': {
+          const octaves = patternParams.octaves ?? 4;
+          const lacunarity = patternParams.lacunarity ?? 2;
+          const gain = patternParams.gain ?? 0.5;
+
+          const hash2 = (x: number, y: number) => {
+            const n = Math.sin(x * 127.1 + y * 311.7) * 43758.545312;
+            return n - Math.floor(n);
+          };
+
+          const noise = (x: number, y: number) => hash2(Math.floor(x), Math.floor(y));
+
+          const fbm = (x: number, y: number, oct: number, lac: number, g: number) => {
+            let amp = 1;
+            let freq = 1;
+            let sum = 0;
+            for (let i = 0; i < oct; i++) {
+              sum += amp * noise(x * freq, y * freq);
+              amp *= g;
+              freq *= lac;
+            }
+            return sum / octaves;
+          };
+
+          const scale = 0.008 * (10 / pixelSize);
+
+          for (let py = 0; py < height; py += pixelSize) {
+            for (let px = 0; px < width; px += pixelSize) {
+              const v =
+                0.5 +
+                0.5 * fbm(px * scale + t * 0.5, py * scale + t * 0.5, octaves, lacunarity, gain);
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              for (let dy = 0; dy < pixelSize && py + dy < height; dy++) {
+                for (let dx = 0; dx < pixelSize && px + dx < width; dx++) {
+                  data32[(py + dy) * width + (px + dx)] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'domain-warp': {
+          const scale = patternParams.scale ?? 0.5;
+          const complexity = patternParams.complexity ?? 3;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              let wx = x * pixelSize;
+              let wy = y * pixelSize;
+
+              for (let i = 0; i < complexity; i++) {
+                const offset = (Math.sin(t * 0.5 + i * 1.5) * 20 * (i + 1)) / complexity;
+                wx += Math.sin(wy * scale + t * (0.3 + i * 0.2)) * offset * 0.05;
+                wy += Math.cos(wx * scale + t * (0.25 + i * 0.15)) * offset * 0.05;
+              }
+
+              const v = 0.5 + 0.5 * Math.sin(wx * 0.02 + t * 0.4) * Math.cos(wy * 0.02 + t * 0.35);
+              const [r, g, b] = colorFromValue(colorMode, v, x * pixelSize, y * pixelSize, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let py = startY; py < limitY; py++) {
+                const rowOffset = py * width;
+                for (let px = startX; px < limitX; px++) {
+                  data32[rowOffset + px] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'ridged': {
+          const pscale = patternParams.scale ?? 0.8;
+          const sharpness = patternParams.sharpness ?? 0.5;
+
+          const hash2 = (x: number, y: number) => {
+            const n = Math.sin(x * 127.1 + y * 311.7) * 43758.545312;
+            return n - Math.floor(n);
+          };
+
+          const noise = (x: number, y: number) => hash2(Math.floor(x), Math.floor(y));
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+
+              let val = noise(px * pscale * 0.01, py * pscale * 0.01);
+
+              const nx = noise((px + 1) * pscale * 0.01, py * pscale * 0.01);
+              const ny = noise(px * pscale * 0.01, (py + 1) * pscale * 0.01);
+
+              const dx = nx - val;
+              const dy = ny - val;
+
+              const ridge = 1 - Math.abs(dx + dy);
+              val = val + (ridge - val) * sharpness;
+
+              const v = 0.5 + 0.5 * val;
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let py = startY; py < limitY; py++) {
+                const rowOffset = py * width;
+                for (let px = startX; px < limitX; px++) {
+                  data32[rowOffset + px] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'halftone': {
+          const dotSize = patternParams.dotSize ?? 6;
+          const angleDeg = patternParams.angle ?? 45;
+          const angleRad = (angleDeg * Math.PI) / 180;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+
+              const v = 0.5 + 0.5 * Math.sin(px * 0.1 + py * 0.1 + t * 0.5);
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = Math.max(0, py - Math.floor(dotSize / 2));
+              const startX = Math.max(0, px - Math.floor(dotSize / 2));
+              const endY = Math.min(height, startY + dotSize);
+              const endX = Math.min(width, startX + dotSize);
+
+              for (let hy = startY; hy < endY; hy++) {
+                for (let hx = startX; hx < endX; hx++) {
+                  const dx = hx - px;
+                  const dy = hy - py;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+
+                  const rotatedDx = dx * Math.cos(angleRad) - dy * Math.sin(angleRad);
+                  const rotatedDy = dx * Math.sin(angleRad) + dy * Math.cos(angleRad);
+
+                  const alignedX = rotatedDx * Math.cos(angleRad) + rotatedDy * Math.sin(angleRad);
+                  const alignedY = -rotatedDx * Math.sin(angleRad) + rotatedDy * Math.cos(angleRad);
+
+                  const isDot = Math.floor(alignedX / dotSize) % 2 === 0;
+
+                  if (isDot) {
+                    data32[hy * width + hx] = colorVal;
+                  } else {
+                    data32[hy * width + hx] = 0xff000000;
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'hatching': {
+          const density = patternParams.density ?? 3;
+          const angleDeg = patternParams.angle ?? 45;
+          const angleRad = (angleDeg * Math.PI) / 180;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+
+              const v = 0.5 + 0.5 * Math.sin(px * 0.05 + py * 0.05 + t * 0.3);
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              const step = pixelSize / density;
+
+              for (let hy = startY; hy < limitY; hy++) {
+                for (let hx = startX; hx < limitX; hx++) {
+                  const dx = hx - px;
+                  const dy = hy - py;
+
+                  const rotatedX = dx * Math.cos(angleRad) - dy * Math.sin(angleRad);
+
+                  const onLine = Math.abs(rotatedX) < step * 0.5;
+
+                  if (onLine) {
+                    data32[hy * width + hx] = colorVal;
+                  } else {
+                    data32[hy * width + hx] = 0xff000000;
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'moire': {
+          const freq = patternParams.frequency ?? 0.5;
+          const rotation = patternParams.rotation ?? 30;
+          const rotRad = (rotation * Math.PI) / 180;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+
+              const v1 = 0.5 + 0.5 * Math.sin(px * freq * 0.02 + py * freq * 0.02);
+              const v2 = 0.5 + 0.5 * Math.cos(px * freq * 0.02 - py * freq * 0.02);
+
+              const rotatedV1 = v1 * Math.cos(rotRad) - v2 * Math.sin(rotRad);
+              const rotatedV2 = v1 * Math.sin(rotRad) + v2 * Math.cos(rotRad);
+
+              const v = 0.5 + 0.5 * (rotatedV1 + rotatedV2);
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let hy = startY; hy < limitY; hy++) {
+                for (let hx = startX; hx < limitX; hx++) {
+                  data32[hy * width + hx] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'gradient-bands': {
+          const bandCount = patternParams.bandCount ?? 5;
+          const speed = patternParams.speed ?? 0.5;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const px = x * pixelSize;
+              const py = y * pixelSize;
+
+              const bandIndex =
+                Math.floor(((px + py) / (width + height) + t * speed) * bandCount) % bandCount;
+              const v = bandIndex / bandCount;
+
+              const [r, g, b] = colorFromValue(colorMode, v, px, py, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              const startY = y * pixelSize;
+              const startX = x * pixelSize;
+              const limitY = Math.min(startY + pixelSize, height);
+              const limitX = Math.min(startX + pixelSize, width);
+
+              for (let hy = startY; hy < limitY; hy++) {
+                for (let hx = startX; hx < limitX; hx++) {
+                  data32[hy * width + hx] = colorVal;
+                }
+              }
+            }
+          }
+          break;
+        }
+        case 'metaballs': {
+          const ballCount = patternParams.ballCount ?? 4;
+          const radius = patternParams.radius ?? 60;
+
+          const cols = Math.ceil(width / pixelSize);
+          const rows = Math.ceil(height / pixelSize);
+
+          const ballPositions = [];
+
+          for (let i = 0; i < ballCount; i++) {
+            const angle = (i / ballCount) * Math.PI * 2;
+            const x =
+              width / 2 + Math.cos(angle + t * 0.5) * (radius * (1 + 0.3 * Math.sin(t * 0.3 + i)));
+            const y =
+              height / 2 +
+              Math.sin(angle + t * 0.4) * (radius * (1 + 0.3 * Math.cos(t * 0.25 + i * 2)));
+            ballPositions.push({ x, y });
+          }
+
+          for (let hy = 0; hy < height; hy++) {
+            for (let hx = 0; hx < width; hx++) {
+              let minDist = Infinity;
+
+              for (const ball of ballPositions) {
+                const dx = hx - ball.x;
+                const dy = hy - ball.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < minDist) minDist = dist;
+              }
+
+              const v = Math.max(0, 1 - minDist / radius);
+              const [r, g, b] = colorFromValue(colorMode, v, hx, hy, t);
+              const colorVal = (255 << 24) | (b << 16) | (g << 8) | r;
+
+              data32[hy * width + hx] = colorVal;
             }
           }
           break;

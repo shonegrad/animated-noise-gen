@@ -22,6 +22,14 @@ interface RetroKnobProps {
   size?: 'sm' | 'md' | 'lg';
   /** Accent color for the indicator */
   color?: string;
+  /** Whether the input is being edited (optional, for external control) */
+  isEditing?: boolean;
+  /** Callback to set editing state (optional) */
+  setIsEditing?: (editing: boolean) => void;
+  /** Current input value string (optional) */
+  inputValue?: string;
+  /** Callback to set input value (optional) */
+  setInputValue?: (value: string) => void;
 }
 
 /**
@@ -37,7 +45,15 @@ export function RetroKnob({
   onChange,
   unit = '',
   size = 'md',
-  color = '#ff6b35'
+  color = '#ff6b35',
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  isEditing: _isEditing,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  setIsEditing: _setIsEditing,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  inputValue: _inputValue,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  setInputValue: _setInputValue,
 }: RetroKnobProps) {
   const [isDragging, setIsDragging] = useState(false);
   const startY = useRef(0);
@@ -47,7 +63,7 @@ export function RetroKnob({
   const sizeMap = {
     sm: { knob: 60, indicator: 3 },
     md: { knob: 80, indicator: 4 },
-    lg: { knob: 100, indicator: 5 }
+    lg: { knob: 100, indicator: 5 },
   };
 
   const dimensions = sizeMap[size];
@@ -149,7 +165,7 @@ export function RetroKnob({
           aria-hidden="true"
         >
           {Array.from({ length: 11 }).map((_, i) => {
-            const angle = -135 + (i * 27); // 11 ticks across 270 degrees
+            const angle = -135 + i * 27; // 11 ticks across 270 degrees
             const rad = (angle * Math.PI) / 180;
             const innerRadius = dimensions.knob / 2 - 8;
             const outerRadius = dimensions.knob / 2 - 2;
@@ -182,7 +198,7 @@ export function RetroKnob({
               inset -2px -2px 4px rgba(0, 0, 0, 0.8),
               inset 2px 2px 4px rgba(255, 255, 255, 0.1),
               0 4px 8px rgba(0, 0, 0, 0.5)
-            `
+            `,
           }}
           onMouseDown={handleMouseDown}
         >
@@ -194,7 +210,7 @@ export function RetroKnob({
                 className="absolute top-0 left-1/2 w-px h-full bg-white/10"
                 style={{
                   transform: `rotate(${i * 15}deg)`,
-                  transformOrigin: '50% 50%'
+                  transformOrigin: '50% 50%',
                 }}
               />
             ))}
@@ -206,7 +222,7 @@ export function RetroKnob({
             style={{
               width: dimensions.knob * 0.6,
               height: dimensions.knob * 0.6,
-              transform: `translate(-50%, -50%) rotate(${rotation}deg)`
+              transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
             }}
           >
             <div
@@ -216,7 +232,7 @@ export function RetroKnob({
                 height: dimensions.indicator,
                 marginLeft: -dimensions.indicator / 2,
                 backgroundColor: color,
-                boxShadow: `0 0 8px ${color}, 0 0 4px ${color}`
+                boxShadow: `0 0 8px ${color}, 0 0 4px ${color}`,
               }}
             />
           </div>
@@ -228,8 +244,11 @@ export function RetroKnob({
         className="text-xs font-mono bg-black/40 px-2 py-0.5 rounded border border-amber-200/20 text-amber-200 min-w-[60px] text-center"
         aria-hidden="true"
       >
-        {typeof value === 'number' ? value.toFixed(step < 1 ? 1 : 0) : value}{unit}
+        {typeof value === 'number' ? value.toFixed(step < 1 ? 1 : 0) : value}
+        {unit}
       </div>
     </div>
   );
 }
+
+RetroKnob.displayName = 'RetroKnob';

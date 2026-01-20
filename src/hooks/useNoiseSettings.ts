@@ -14,6 +14,8 @@ export interface NoiseSettings {
   };
   /** Deterministic seed for reproducible output */
   seed?: number;
+  /** Pattern-specific parameters */
+  patternParams?: Record<string, number>;
 }
 
 /** Settings state with setters */
@@ -25,6 +27,7 @@ export interface UseNoiseSettingsResult extends NoiseSettings {
   setDistortion: (value: Distortion) => void;
   setDistortionIntensity: (value: number) => void;
   setDistortionSecondary: (value: number) => void;
+  setPatternParam: (name: string, value: number) => void;
   setSeed: (value: number | undefined) => void;
   randomizeSeed: () => void;
   applyPreset: (preset: 'default' | 'hacker' | 'vcr' | 'trip') => void;
@@ -79,6 +82,12 @@ export function useNoiseSettings(
     setDistortionParams((p) => ({ ...p, secondary: val }));
   }, []);
 
+  const [patternParams, setPatternParamsState] = useState<Record<string, number>>({});
+
+  const setPatternParam = useCallback((name: string, value: number) => {
+    setPatternParamsState((p) => ({ ...p, [name]: value }));
+  }, []);
+
   const applyPreset = useCallback(
     (preset: 'default' | 'hacker' | 'vcr' | 'trip') => {
       switch (preset) {
@@ -119,6 +128,7 @@ export function useNoiseSettings(
     distortion,
     distortionParams,
     seed,
+    patternParams,
     setPixelSize,
     setSpeed,
     setColorMode,
@@ -126,6 +136,7 @@ export function useNoiseSettings(
     setDistortion,
     setDistortionIntensity,
     setDistortionSecondary,
+    setPatternParam,
     setSeed,
     randomizeSeed,
     applyPreset,
